@@ -47,9 +47,10 @@ var (
 		timeZone:         "TZ",
 	}
 	defaultLabels = struct {
-		serviceType, appType, session string
+		serviceType, apiServer, appType, session string
 	}{
 		serviceType: "type",
+		apiServer:   "apiserver",
 		appType:     label,
 		session:     "session",
 	}
@@ -311,6 +312,7 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 	}
 
 	labels := map[string]string{
+		defaultLabels.apiServer:   "access",
 		defaultLabels.serviceType: "browser",
 		defaultLabels.appType:     "browser",
 		defaultLabels.session:     layout.SessionID,
