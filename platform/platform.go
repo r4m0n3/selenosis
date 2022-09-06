@@ -18,14 +18,16 @@ type Meta struct {
 
 //Spec describes specification for Service
 type Spec struct {
-	Resources    apiv1.ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
-	HostAliases  []apiv1.HostAlias          `yaml:"hostAliases,omitempty" json:"hostAliases,omitempty"`
-	EnvVars      []apiv1.EnvVar             `yaml:"env,omitempty" json:"env,omitempty"`
-	NodeSelector map[string]string          `yaml:"nodeSelector,omitempty" json:"nodeSelector,omitempty"`
-	Affinity     apiv1.Affinity             `yaml:"affinity,omitempty" json:"affinity,omitempty"`
-	DNSConfig    apiv1.PodDNSConfig         `yaml:"dnsConfig,omitempty" json:"dnsConfig,omitempty"`
-	Tolerations  []apiv1.Toleration         `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
-	VolumeMounts []apiv1.VolumeMount        `yaml:"volumeMounts,omitempty" json:"volumeMounts,omitempty"`
+	Resources          apiv1.ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
+	HostAliases        []apiv1.HostAlias          `yaml:"hostAliases,omitempty" json:"hostAliases,omitempty"`
+	EnvVars            []apiv1.EnvVar             `yaml:"env,omitempty" json:"env,omitempty"`
+	NodeSelector       map[string]string          `yaml:"nodeSelector,omitempty" json:"nodeSelector,omitempty"`
+	Affinity           apiv1.Affinity             `yaml:"affinity,omitempty" json:"affinity,omitempty"`
+	DNSConfig          apiv1.PodDNSConfig         `yaml:"dnsConfig,omitempty" json:"dnsConfig,omitempty"`
+	Tolerations        []apiv1.Toleration         `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
+	VolumeMounts       []apiv1.VolumeMount        `yaml:"volumeMounts,omitempty" json:"volumeMounts,omitempty"`
+	ServiceAccountName string                     `yaml:"serviceAccountName,omitempty" json:"ServiceAccountName,omitempty"`
+	PriorityClassName  string                     `yaml:"priorityClassName,omitempty" json:"priorityClassName,omitempty"`
 }
 type RunAsOptions struct {
 	RunAsUser  *int64 `yaml:"uid,omitempty" json:"uid,omitempty"`

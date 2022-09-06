@@ -419,15 +419,17 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 					ImagePullPolicy: apiv1.PullIfNotPresent,
 				},
 			},
-			Volumes:          getVolumes(layout.Template.Volumes),
-			NodeSelector:     layout.Template.Spec.NodeSelector,
-			HostAliases:      layout.Template.Spec.HostAliases,
-			RestartPolicy:    apiv1.RestartPolicyNever,
-			Affinity:         &layout.Template.Spec.Affinity,
-			DNSConfig:        &layout.Template.Spec.DNSConfig,
-			Tolerations:      layout.Template.Spec.Tolerations,
-			ImagePullSecrets: getImagePullSecretList(cl.imagePullSecretName),
-			SecurityContext:  getSecurityContext(layout.Template.RunAs),
+			Volumes:            getVolumes(layout.Template.Volumes),
+			NodeSelector:       layout.Template.Spec.NodeSelector,
+			HostAliases:        layout.Template.Spec.HostAliases,
+			RestartPolicy:      apiv1.RestartPolicyNever,
+			Affinity:           &layout.Template.Spec.Affinity,
+			DNSConfig:          &layout.Template.Spec.DNSConfig,
+			Tolerations:        layout.Template.Spec.Tolerations,
+			ImagePullSecrets:   getImagePullSecretList(cl.imagePullSecretName),
+			SecurityContext:    getSecurityContext(layout.Template.RunAs),
+			ServiceAccountName: layout.Template.Spec.ServiceAccountName,
+			PriorityClassName:  layout.Template.Spec.PriorityClassName,
 		},
 	}
 
@@ -719,7 +721,7 @@ func waitForService(u url.URL, t time.Duration) error {
 				resp.Body.Close()
 			}
 			if err != nil {
-				<-time.After(50 * time.Millisecond)
+				<-time.After(500 * time.Millisecond)
 				continue
 			}
 			up <- struct{}{}

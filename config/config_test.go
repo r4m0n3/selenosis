@@ -81,7 +81,7 @@ func TestConfigFile(t *testing.T) {
 	}{
 		"verify config file not exist": {
 			data: empty,
-			err:  errors.New("failed to read config: read error: open : The system cannot find the file specified."),
+			err:  errors.New("failed to read config: read error: open : no such file or directory"),
 		},
 	}
 
