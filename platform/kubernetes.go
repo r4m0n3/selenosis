@@ -416,7 +416,7 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 					Image: cl.proxyImage,
 					Ports: getSidecarPorts(cl.svcPort),
 					Command: []string{
-						"/seleniferous", "--listhen-port", cl.svcPort.StrVal, "--proxy-default-path", path.Join(layout.Template.Path, "session"), "--idle-timeout", cl.idleTimeout.String(), "--namespace", cl.ns,
+						"/seleniferous", "--listen-port", cl.svcPort.StrVal, "--proxy-default-path", path.Join(layout.Template.Path, "session"), "--idle-timeout", cl.idleTimeout.String(), "--namespace", cl.ns,
 					},
 					ImagePullPolicy: apiv1.PullIfNotPresent,
 				},
