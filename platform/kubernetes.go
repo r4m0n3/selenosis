@@ -415,6 +415,13 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 					Name:  "seleniferous",
 					Image: cl.proxyImage,
 					Ports: getSidecarPorts(cl.svcPort),
+					// TODO: Should we move this settings to the config?
+					Resources: apiv1.ResourceRequirements{
+						Limits: apiv1.ResourceList{
+							apiv1.ResourceCPU:    resource.MustParse("250m"),
+							apiv1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+					},
 					Command: []string{
 						"/seleniferous", "--listen-port", cl.svcPort.StrVal, "--proxy-default-path", path.Join(layout.Template.Path, "session"), "--idle-timeout", cl.idleTimeout.String(), "--namespace", cl.ns,
 					},
