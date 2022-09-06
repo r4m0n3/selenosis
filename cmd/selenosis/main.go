@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"net/http"
 	"os"
@@ -90,6 +92,9 @@ func command() *cobra.Command {
 				BuildVersion:       buildVersion,
 			})
 
+			prometheus.Register(selenosis.SessionLimitStat)
+			prometheus.Register(selenosis.SessionRunningStat)
+
 			router := mux.NewRouter()
 			router.HandleFunc("/wd/hub/session", app.HandleSession).Methods(http.MethodPost)
 			router.PathPrefix("/wd/hub/session/{sessionId}").HandlerFunc(app.HandleProxy)
@@ -100,6 +105,7 @@ func command() *cobra.Command {
 			router.PathPrefix("/download/{sessionId}").HandlerFunc(app.HandleReverseProxy)
 			router.PathPrefix("/clipboard/{sessionId}").HandlerFunc(app.HandleReverseProxy)
 			router.PathPrefix("/status").HandlerFunc(app.HandleStatus)
+			router.Handle("/metrics", promhttp.Handler())
 			router.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}).Methods(http.MethodGet)

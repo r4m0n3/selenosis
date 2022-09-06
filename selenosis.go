@@ -1,12 +1,28 @@
 package selenosis
 
 import (
+	"github.com/prometheus/client_golang/prometheus"
 	"time"
 
 	"github.com/alcounit/selenosis/config"
 	"github.com/alcounit/selenosis/platform"
 	"github.com/alcounit/selenosis/storage"
 	log "github.com/sirupsen/logrus"
+)
+
+var (
+	SessionLimitStat = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "selenosis_sessions_limit",
+			Help: "Maximum number of browser sessions allowed",
+		},
+	)
+	SessionRunningStat = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "selenosis_sessions_running",
+			Help: "Total number of currently running browser sessions",
+		},
+	)
 )
 
 //Configuration ....
@@ -56,6 +72,7 @@ func New(logger *log.Logger, client platform.Platform, browsers *config.Browsers
 	}
 
 	limit := cfg.SessionLimit
+	SessionLimitStat.Set(float64(cfg.SessionLimit))
 	currentTotal := func() int64 {
 		return int64(storage.Workers().Len() + limit)
 	}
@@ -82,17 +99,19 @@ func New(logger *log.Logger, client platform.Platform, browsers *config.Browsers
 	go func() {
 		for {
 			select {
-			case event := <- ch:
+			case event := <-ch:
 				switch event.PlatformObject.(type) {
 				case platform.Service:
 					service := event.PlatformObject.(platform.Service)
 					switch event.Type {
 					case platform.Added:
 						storage.Sessions().Put(service.SessionID, service)
+						SessionRunningStat.Inc()
 					case platform.Updated:
 						storage.Sessions().Put(service.SessionID, service)
 					case platform.Deleted:
 						storage.Sessions().Delete(service.SessionID)
+						SessionRunningStat.Dec()
 					}
 
 				case platform.Worker:
