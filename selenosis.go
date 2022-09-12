@@ -23,9 +23,16 @@ var (
 			Help: "Total number of currently running browser sessions",
 		},
 	)
+	SessionBrowserCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "selenosis_session_count",
+			Help: "Browser consumption corresponding to exact browser name and version.",
+		},
+		[]string{"browserName", "browserVersion"},
+	)
 )
 
-//Configuration ....
+// Configuration ....
 type Configuration struct {
 	SelenosisHost      string
 	ServiceName        string
@@ -37,7 +44,7 @@ type Configuration struct {
 	BuildVersion       string
 }
 
-//App ...
+// App ...
 type App struct {
 	logger             *log.Logger
 	client             platform.Platform
@@ -53,7 +60,7 @@ type App struct {
 	stats              *storage.Storage
 }
 
-//New ...
+// New ...
 func New(logger *log.Logger, client platform.Platform, browsers *config.BrowsersConfig, cfg Configuration) *App {
 
 	storage := storage.New()
@@ -103,15 +110,19 @@ func New(logger *log.Logger, client platform.Platform, browsers *config.Browsers
 				switch event.PlatformObject.(type) {
 				case platform.Service:
 					service := event.PlatformObject.(platform.Service)
+					browserName, _ := service.Labels["browserName"]
+					browserVersion, _ := service.Labels["browserVersion"]
 					switch event.Type {
 					case platform.Added:
 						storage.Sessions().Put(service.SessionID, service)
 						SessionRunningStat.Inc()
+						SessionBrowserCount.WithLabelValues(browserName, browserVersion).Inc()
 					case platform.Updated:
 						storage.Sessions().Put(service.SessionID, service)
 					case platform.Deleted:
 						storage.Sessions().Delete(service.SessionID)
 						SessionRunningStat.Dec()
+						SessionBrowserCount.WithLabelValues(browserName, browserVersion).Dec()
 					}
 
 				case platform.Worker:

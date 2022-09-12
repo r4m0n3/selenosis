@@ -10,13 +10,13 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 )
 
-//Meta describes standart metadata
+// Meta describes standard metadata
 type Meta struct {
 	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }
 
-//Spec describes specification for Service
+// Spec describes specification for Service
 type Spec struct {
 	Resources          apiv1.ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
 	HostAliases        []apiv1.HostAlias          `yaml:"hostAliases,omitempty" json:"hostAliases,omitempty"`
@@ -34,7 +34,7 @@ type RunAsOptions struct {
 	RunAsGroup *int64 `yaml:"gid,omitempty" json:"gid,omitempty"`
 }
 
-//BrowserSpec describes settings for Service
+// BrowserSpec describes settings for Service
 type BrowserSpec struct {
 	BrowserName    string             `yaml:"-" json:"-"`
 	BrowserVersion string             `yaml:"-" json:"-"`
@@ -48,14 +48,14 @@ type BrowserSpec struct {
 	RunAs          RunAsOptions       `yaml:"runAs,omitempty" json:"runAs,omitempty"`
 }
 
-//ServiceSpec describes data requred for creating service
+// ServiceSpec describes data required for creating service
 type ServiceSpec struct {
 	SessionID             string
 	RequestedCapabilities selenium.Capabilities
 	Template              BrowserSpec
 }
 
-//Service ...
+// Service ...
 type Service struct {
 	SessionID  string            `json:"id"`
 	URL        *url.URL          `json:"-"`
@@ -85,16 +85,16 @@ type Worker struct {
 	Uptime  string            `json:"uptime"`
 }
 
-//ServiceStatus ...
+// ServiceStatus ...
 type ServiceStatus string
 
-//Event ...
+// Event ...
 type Event struct {
 	Type           EventType
 	PlatformObject interface{}
 }
 
-//EventType ...
+// EventType ...
 type EventType string
 
 const (
@@ -107,7 +107,7 @@ const (
 	Unknown ServiceStatus = "Unknown"
 )
 
-//Platform ...
+// Platform ...
 type Platform interface {
 	Service() ServiceInterface
 	Quota() QuotaInterface

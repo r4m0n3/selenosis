@@ -25,7 +25,7 @@ import (
 
 var buildVersion = "HEAD"
 
-//Command ...
+// Command ...
 func command() *cobra.Command {
 
 	var (
@@ -46,7 +46,7 @@ func command() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "selenosis",
-		Short: "Scallable, stateless selenium grid for Kubernetes cluster",
+		Short: "Scalable, stateless selenium grid for Kubernetes cluster",
 		Run: func(cmd *cobra.Command, args []string) {
 
 			logger := logrus.New()
@@ -94,6 +94,7 @@ func command() *cobra.Command {
 
 			prometheus.Register(selenosis.SessionLimitStat)
 			prometheus.Register(selenosis.SessionRunningStat)
+			prometheus.Register(selenosis.SessionBrowserCount)
 
 			router := mux.NewRouter()
 			router.HandleFunc("/wd/hub/session", app.HandleSession).Methods(http.MethodPost)
