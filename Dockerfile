@@ -8,14 +8,15 @@ WORKDIR /src
 
 ENV GO111MODULE=on
 
-ADD go.* ./
+COPY go.* ./
 
 RUN go mod download
 
-ADD . .
+COPY . .
 
-RUN cd cmd/selenosis && \
-    go install -ldflags="-X main.buildVersion=$BUILD_VERSION -linkmode external -extldflags '-static' -s -w"
+WORKDIR /src/cmd/selenosis
+
+RUN go install -ldflags="-X main.buildVersion=$BUILD_VERSION -linkmode external -extldflags '-static' -s -w"
 
 
 FROM scratch
