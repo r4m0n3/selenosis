@@ -30,21 +30,37 @@ var (
 	label        = "selenosis.app.type"
 	quotaName    = "selenosis-pod-limit"
 	browserPorts = struct {
-		selenium, vnc intstr.IntOrString
+		selenium, vnc, video intstr.IntOrString
 	}{
 		selenium: intstr.FromString("4444"),
 		vnc:      intstr.FromString("5900"),
+		video:    intstr.FromString("6099"),
 	}
 
 	defaultsAnnotations = struct {
-		testName, browserName, browserVersion, screenResolution, enableVNC, timeZone string
+		testName,
+		browserName,
+		browserVersion,
+		screenResolution,
+		enableVNC,
+		enableVideo,
+		timeZone,
+		videoName,
+		videoScreenSize,
+		videoCodec,
+		videoFrameRate string
 	}{
 		testName:         "testName",
 		browserName:      "browserName",
 		browserVersion:   "browserVersion",
 		screenResolution: "SCREEN_RESOLUTION",
 		enableVNC:        "ENABLE_VNC",
+		enableVideo:      "ENABLE_VIDEO",
 		timeZone:         "TZ",
+		videoName:        "FILE_NAME",
+		videoScreenSize:  "VIDEO_SIZE",
+		videoCodec:       "CODEC",
+		videoFrameRate:   "FRAME_RATE",
 	}
 	defaultLabels = struct {
 		serviceType, apiServer, appType, session string
@@ -56,18 +72,19 @@ var (
 	}
 )
 
-//ClientConfig ...
+// ClientConfig ...
 type ClientConfig struct {
 	Namespace           string
 	Service             string
 	ServicePort         string
 	ImagePullSecretName string
 	ProxyImage          string
+	VideoImage          string
 	ReadinessTimeout    time.Duration
 	IdleTimeout         time.Duration
 }
 
-//Client ...
+// Client ...
 type Client struct {
 	ns        string
 	svc       string
@@ -77,7 +94,7 @@ type Client struct {
 	quota     QuotaInterface
 }
 
-//NewClient ...
+// NewClient ...
 func NewClient(c ClientConfig) (Platform, error) {
 
 	conf, err := rest.InClusterConfig()
@@ -97,8 +114,10 @@ func NewClient(c ClientConfig) (Platform, error) {
 		svcPort:             intstr.FromString(c.ServicePort),
 		imagePullSecretName: c.ImagePullSecretName,
 		proxyImage:          c.ProxyImage,
+		videoImage:          c.VideoImage,
 		readinessTimeout:    c.ReadinessTimeout,
 		idleTimeout:         c.IdleTimeout,
+		waitForService:      waitForService,
 	}
 
 	quota := &quota{
@@ -125,7 +144,7 @@ func (cl *Client) Quota() QuotaInterface {
 	return cl.quota
 }
 
-//List ...
+// List ...
 func (cl *Client) State() (PlatformState, error) {
 	context := context.Background()
 	pods, err := cl.clientset.CoreV1().Pods(cl.ns).List(context, metav1.ListOptions{})
@@ -186,7 +205,7 @@ func (cl *Client) State() (PlatformState, error) {
 
 }
 
-//Watch ...
+// Watch ...
 func (cl *Client) Watch() <-chan Event {
 	ch := make(chan Event)
 	namespace := informers.WithNamespace(cl.ns)
@@ -292,19 +311,277 @@ func (cl *Client) Watch() <-chan Event {
 	return ch
 }
 
+type waitSvcReadyFunc func(u url.URL, t time.Duration) error
+
 type service struct {
 	ns                  string
 	svc                 string
 	svcPort             intstr.IntOrString
 	imagePullSecretName string
 	proxyImage          string
+	videoImage          string
 	readinessTimeout    time.Duration
 	idleTimeout         time.Duration
 	clientset           kubernetes.Interface
+	waitForService      waitSvcReadyFunc
 }
 
-//Create ...
+// Create ...
 func (cl *service) Create(layout ServiceSpec) (Service, error) {
+	pod := cl.buildPod(setEnvAndMeta(layout))
+
+	// TODO: change background context to context with timeout. Here we are waiting forever for pod creation for example if image does not exist.
+	context := context.Background()
+	pod, err := cl.clientset.CoreV1().Pods(cl.ns).Create(context, pod, metav1.CreateOptions{})
+
+	if err != nil {
+		return Service{}, fmt.Errorf("failed to create pod %v", err)
+	}
+
+	podName := pod.GetName()
+	cancel := func() {
+		cl.Delete(podName)
+	}
+
+	w, err := cl.clientset.CoreV1().Pods(cl.ns).Watch(context, metav1.ListOptions{
+		FieldSelector:  fields.OneTermEqualSelector("metadata.name", podName).String(),
+		TimeoutSeconds: pointer.Int64Ptr(cl.readinessTimeout.Milliseconds()),
+	})
+
+	if err != nil {
+		return Service{}, fmt.Errorf("failed to watch pod status: %v", err)
+	}
+
+	statusFn := func() error {
+		defer w.Stop()
+		var watchedPod *apiv1.Pod
+
+		for event := range w.ResultChan() {
+			switch event.Type {
+			case watch.Error:
+				return fmt.Errorf("received error while watching pod: %s",
+					event.Object.GetObjectKind().GroupVersionKind().String())
+			case watch.Deleted, watch.Added, watch.Modified:
+				watchedPod = event.Object.(*apiv1.Pod)
+			default:
+				return fmt.Errorf("received unknown event type %s while watching pod", event.Type)
+			}
+			if event.Type == watch.Deleted {
+				return errors.New("pod was deleted before becoming available")
+			}
+			switch watchedPod.Status.Phase {
+			case apiv1.PodPending:
+				continue
+			case apiv1.PodSucceeded, apiv1.PodFailed:
+				return fmt.Errorf("pod exited early with status %s", watchedPod.Status.Phase)
+			case apiv1.PodRunning:
+				return nil
+			case apiv1.PodUnknown:
+				return errors.New("couldn't obtain pod state")
+			default:
+				return errors.New("pod has unknown status")
+			}
+		}
+		return fmt.Errorf("pod wasn't running")
+	}
+
+	err = statusFn()
+	if err != nil {
+		cancel()
+		return Service{}, fmt.Errorf("pod is not ready after creation: %v", err)
+	}
+
+	u := &url.URL{
+		Scheme: "http",
+		Host:   podName + "." + cl.svc + ":" + browserPorts.selenium.StrVal,
+	}
+
+	if err := cl.waitForService(*u, cl.readinessTimeout); err != nil {
+		cancel()
+		return Service{}, fmt.Errorf("container service is not ready %v", u.String())
+	}
+
+	u.Host = podName + "." + cl.svc + ":" + cl.svcPort.StrVal
+
+	return Service{
+		SessionID: podName,
+		URL:       u,
+		Labels:    getRequestedCapabilities(pod.GetAnnotations()),
+		CancelFunc: func() {
+			cancel()
+		},
+		Status:  Running,
+		Started: pod.CreationTimestamp.Time,
+	}, nil
+}
+
+// Delete ...
+func (cl *service) Delete(name string) error {
+	return deletePod(cl.clientset, cl.ns, name)
+}
+
+// Logs ...
+func (cl *service) Logs(ctx context.Context, name string) (io.ReadCloser, error) {
+	req := cl.clientset.CoreV1().Pods(cl.ns).GetLogs(name, &apiv1.PodLogOptions{
+		Container:  "browser",
+		Follow:     true,
+		Previous:   false,
+		Timestamps: false,
+	})
+	return req.Stream(ctx)
+}
+
+func (cl *service) buildPod(layout ServiceSpec) *apiv1.Pod {
+	pod := &apiv1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        layout.SessionID,
+			Labels:      layout.Template.Meta.Labels,
+			Annotations: layout.Template.Meta.Annotations,
+		},
+		Spec: apiv1.PodSpec{
+			Hostname:  layout.SessionID,
+			Subdomain: cl.svc,
+			Containers: []apiv1.Container{
+				{
+					Name:  "browser",
+					Image: layout.Template.Image,
+					SecurityContext: &apiv1.SecurityContext{
+						Privileged:   layout.Template.Privileged,
+						Capabilities: getCapabilities(layout.Template.Capabilities),
+					},
+					Env:             layout.Template.Spec.EnvVars,
+					Ports:           getBrowserPorts(),
+					Resources:       layout.Template.Spec.Resources,
+					VolumeMounts:    getVolumeMounts(layout.Template.Spec.VolumeMounts),
+					ImagePullPolicy: apiv1.PullIfNotPresent,
+				},
+				{
+					Name:  "seleniferous",
+					Image: cl.proxyImage,
+					Ports: getSidecarPorts(cl.svcPort),
+					// TODO: Should we move this settings to the config?
+					Resources: apiv1.ResourceRequirements{
+						Limits: apiv1.ResourceList{
+							apiv1.ResourceCPU:    resource.MustParse("250m"),
+							apiv1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+					},
+					Command: []string{
+						"/seleniferous", "--listen-port", cl.svcPort.StrVal, "--proxy-default-path", path.Join(layout.Template.Path, "session"), "--idle-timeout", cl.idleTimeout.String(), "--namespace", cl.ns,
+					},
+					ImagePullPolicy: apiv1.PullIfNotPresent,
+				},
+			},
+			Volumes:            getVolumes(layout.Template.Volumes),
+			NodeSelector:       layout.Template.Spec.NodeSelector,
+			HostAliases:        layout.Template.Spec.HostAliases,
+			RestartPolicy:      apiv1.RestartPolicyNever,
+			Affinity:           &layout.Template.Spec.Affinity,
+			DNSConfig:          &layout.Template.Spec.DNSConfig,
+			Tolerations:        layout.Template.Spec.Tolerations,
+			ImagePullSecrets:   getImagePullSecretList(cl.imagePullSecretName),
+			SecurityContext:    getSecurityContext(layout.Template.RunAs),
+			ServiceAccountName: layout.Template.Spec.ServiceAccountName,
+			PriorityClassName:  layout.Template.Spec.PriorityClassName,
+		},
+	}
+
+	if layout.RequestedCapabilities.Video {
+		videoContainer := apiv1.Container{
+			Name:            "video-recorder",
+			Image:           cl.videoImage,
+			Ports:           getVideoPorts(),
+			Env:             layout.Template.Spec.EnvVars,
+			VolumeMounts:    getVolumeMounts(layout.Template.Spec.VolumeMounts),
+			ImagePullPolicy: apiv1.PullIfNotPresent,
+			Command:         []string{},
+		}
+
+		lifecycle := &apiv1.Lifecycle{
+			PreStop: &apiv1.Handler{
+				Exec: &apiv1.ExecAction{
+					Command: []string{"sh", "-c", "sleep 5"},
+				},
+			},
+		}
+		pod.Spec.Containers[0].Lifecycle = lifecycle
+		pod.Spec.Containers = append(pod.Spec.Containers, videoContainer)
+	}
+	return pod
+}
+
+type quota struct {
+	ns        string
+	clientset kubernetes.Interface
+}
+
+// Create ...
+func (cl quota) Create(limit int64) (Quota, error) {
+	context := context.Background()
+	quantity, err := resource.ParseQuantity(strconv.FormatInt(limit, 10))
+	if err != nil {
+		return Quota{}, fmt.Errorf("failed to parse limit amount")
+	}
+	quota := &apiv1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   quotaName,
+			Labels: map[string]string{label: "quota"},
+		},
+		Spec: apiv1.ResourceQuotaSpec{
+			Hard: map[apiv1.ResourceName]resource.Quantity{apiv1.ResourcePods: quantity},
+		},
+	}
+	quota, err = cl.clientset.CoreV1().ResourceQuotas(cl.ns).Create(context, quota, metav1.CreateOptions{})
+	if err != nil {
+		return Quota{}, fmt.Errorf("failed to create resourceQuota")
+	}
+	return Quota{
+		Name:            quota.GetName(),
+		CurrentMaxLimit: quota.Spec.Hard.Pods().Value(),
+	}, nil
+}
+
+func (cl quota) Get() (Quota, error) {
+	context := context.Background()
+	quota, err := cl.clientset.CoreV1().ResourceQuotas(cl.ns).Get(context, quotaName, metav1.GetOptions{})
+	if err != nil {
+		return Quota{}, fmt.Errorf("quota not found")
+	}
+
+	return Quota{
+		Name:            quota.GetName(),
+		CurrentMaxLimit: quota.Spec.Hard.Pods().Value(),
+	}, nil
+}
+
+// Update ...
+func (cl quota) Update(limit int64) (Quota, error) {
+	context := context.Background()
+	quantity, err := resource.ParseQuantity(strconv.FormatInt(limit, 10))
+	if err != nil {
+		return Quota{}, fmt.Errorf("failed to parse limit amount")
+	}
+	rq := &apiv1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   quotaName,
+			Labels: map[string]string{label: "quota"},
+		},
+		Spec: apiv1.ResourceQuotaSpec{
+			Hard: map[apiv1.ResourceName]resource.Quantity{apiv1.ResourcePods: quantity},
+		},
+	}
+	quota, err := cl.clientset.CoreV1().ResourceQuotas(cl.ns).Update(context, rq, metav1.UpdateOptions{})
+	if err != nil {
+		return Quota{}, fmt.Errorf("resourse quota update error: %v", err)
+	}
+
+	return Quota{
+		Name:            quota.GetName(),
+		CurrentMaxLimit: rq.Spec.Hard.Pods().Value(),
+	}, err
+}
+
+func setEnvAndMeta(layout ServiceSpec) ServiceSpec {
 	annontations := map[string]string{
 		defaultsAnnotations.browserName:    layout.Template.BrowserName,
 		defaultsAnnotations.browserVersion: layout.Template.BrowserVersion,
@@ -372,6 +649,72 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 		}
 	}
 
+	i, b = envVar(defaultsAnnotations.enableVideo)
+	if layout.RequestedCapabilities.Video {
+		video := fmt.Sprintf("%v", layout.RequestedCapabilities.Video)
+		if !b {
+			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.enableVideo, Value: video})
+		} else {
+			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.enableVideo, Value: video}
+		}
+		layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: "BROWSER_CONTAINER_NAME", Value: "localhost"})
+
+		i, b = envVar(defaultsAnnotations.videoName)
+		videoName := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoName)
+		if videoName == "" {
+			if b {
+				videoName = layout.Template.Spec.EnvVars[i].Value
+			} else {
+				videoName = fmt.Sprintf("%v.mp4", layout.SessionID)
+			}
+		}
+		if !b {
+			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoName, Value: videoName})
+		} else {
+			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoName, Value: videoName}
+		}
+
+		i, b = envVar(defaultsAnnotations.videoScreenSize)
+		videoScreenSize := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoScreenSize)
+		if videoScreenSize != "" {
+			if !b {
+				layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoScreenSize, Value: videoScreenSize})
+			} else {
+				layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoScreenSize, Value: videoScreenSize}
+			}
+			annontations[defaultsAnnotations.videoScreenSize] = videoScreenSize
+		}
+
+		i, b = envVar(defaultsAnnotations.videoFrameRate)
+		videoFrameRate := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoFrameRate)
+		if videoFrameRate != "0" {
+			if !b {
+				layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoFrameRate, Value: videoFrameRate})
+			} else {
+				layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoFrameRate, Value: videoFrameRate}
+			}
+			annontations[defaultsAnnotations.videoFrameRate] = videoFrameRate
+		}
+
+		i, b = envVar(defaultsAnnotations.videoCodec)
+		videoCodec := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoCodec)
+		if videoCodec != "" {
+			if !b {
+				layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoCodec, Value: videoCodec})
+			} else {
+				layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoCodec, Value: videoCodec}
+			}
+			annontations[defaultsAnnotations.videoCodec] = videoCodec
+		}
+
+		annontations[defaultsAnnotations.enableVideo] = video
+		annontations[defaultsAnnotations.videoName] = videoName
+	} else {
+		if b {
+			annontations[defaultsAnnotations.enableVideo] = layout.Template.Spec.EnvVars[i].Value
+		}
+	}
+
 	if layout.Template.Meta.Labels == nil {
 		layout.Template.Meta.Labels = make(map[string]string)
 	}
@@ -388,229 +731,7 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 		layout.Template.Meta.Annotations["capabilities"] = string(caps)
 	}
 
-	pod := &apiv1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        layout.SessionID,
-			Labels:      layout.Template.Meta.Labels,
-			Annotations: layout.Template.Meta.Annotations,
-		},
-		Spec: apiv1.PodSpec{
-			Hostname:  layout.SessionID,
-			Subdomain: cl.svc,
-			Containers: []apiv1.Container{
-				{
-					Name:  "browser",
-					Image: layout.Template.Image,
-					SecurityContext: &apiv1.SecurityContext{
-						Privileged:   layout.Template.Privileged,
-						Capabilities: getCapabilities(layout.Template.Capabilities),
-					},
-					Env:             layout.Template.Spec.EnvVars,
-					Ports:           getBrowserPorts(),
-					Resources:       layout.Template.Spec.Resources,
-					VolumeMounts:    getVolumeMounts(layout.Template.Spec.VolumeMounts),
-					ImagePullPolicy: apiv1.PullIfNotPresent,
-				},
-				{
-					Name:  "seleniferous",
-					Image: cl.proxyImage,
-					Ports: getSidecarPorts(cl.svcPort),
-					// TODO: Should we move this settings to the config?
-					Resources: apiv1.ResourceRequirements{
-						Limits: apiv1.ResourceList{
-							apiv1.ResourceCPU:    resource.MustParse("250m"),
-							apiv1.ResourceMemory: resource.MustParse("128Mi"),
-						},
-					},
-					Command: []string{
-						"/seleniferous", "--listen-port", cl.svcPort.StrVal, "--proxy-default-path", path.Join(layout.Template.Path, "session"), "--idle-timeout", cl.idleTimeout.String(), "--namespace", cl.ns,
-					},
-					ImagePullPolicy: apiv1.PullIfNotPresent,
-				},
-			},
-			Volumes:            getVolumes(layout.Template.Volumes),
-			NodeSelector:       layout.Template.Spec.NodeSelector,
-			HostAliases:        layout.Template.Spec.HostAliases,
-			RestartPolicy:      apiv1.RestartPolicyNever,
-			Affinity:           &layout.Template.Spec.Affinity,
-			DNSConfig:          &layout.Template.Spec.DNSConfig,
-			Tolerations:        layout.Template.Spec.Tolerations,
-			ImagePullSecrets:   getImagePullSecretList(cl.imagePullSecretName),
-			SecurityContext:    getSecurityContext(layout.Template.RunAs),
-			ServiceAccountName: layout.Template.Spec.ServiceAccountName,
-			PriorityClassName:  layout.Template.Spec.PriorityClassName,
-		},
-	}
-
-	context := context.Background()
-	pod, err := cl.clientset.CoreV1().Pods(cl.ns).Create(context, pod, metav1.CreateOptions{})
-
-	if err != nil {
-		return Service{}, fmt.Errorf("failed to create pod %v", err)
-	}
-
-	podName := pod.GetName()
-	cancel := func() {
-		cl.Delete(podName)
-	}
-
-	w, err := cl.clientset.CoreV1().Pods(cl.ns).Watch(context, metav1.ListOptions{
-		FieldSelector:  fields.OneTermEqualSelector("metadata.name", podName).String(),
-		TimeoutSeconds: pointer.Int64Ptr(cl.readinessTimeout.Milliseconds()),
-	})
-
-	if err != nil {
-		return Service{}, fmt.Errorf("failed to watch pod status: %v", err)
-	}
-
-	statusFn := func() error {
-		defer w.Stop()
-		var watchedPod *apiv1.Pod
-
-		for event := range w.ResultChan() {
-			switch event.Type {
-			case watch.Error:
-				return fmt.Errorf("received error while watching pod: %s",
-					event.Object.GetObjectKind().GroupVersionKind().String())
-			case watch.Deleted, watch.Added, watch.Modified:
-				watchedPod = event.Object.(*apiv1.Pod)
-			default:
-				return fmt.Errorf("received unknown event type %s while watching pod", event.Type)
-			}
-			if event.Type == watch.Deleted {
-				return errors.New("pod was deleted before becoming available")
-			}
-			switch watchedPod.Status.Phase {
-			case apiv1.PodPending:
-				continue
-			case apiv1.PodSucceeded, apiv1.PodFailed:
-				return fmt.Errorf("pod exited early with status %s", watchedPod.Status.Phase)
-			case apiv1.PodRunning:
-				return nil
-			case apiv1.PodUnknown:
-				return errors.New("couldn't obtain pod state")
-			default:
-				return errors.New("pod has unknown status")
-			}
-		}
-		return fmt.Errorf("pod wasn't running")
-	}
-
-	err = statusFn()
-	if err != nil {
-		cancel()
-		return Service{}, fmt.Errorf("pod is not ready after creation: %v", err)
-	}
-
-	u := &url.URL{
-		Scheme: "http",
-		Host:   podName + "." + cl.svc + ":" + browserPorts.selenium.StrVal,
-	}
-
-	if err := waitForService(*u, cl.readinessTimeout); err != nil {
-		cancel()
-		return Service{}, fmt.Errorf("container service is not ready %v", u.String())
-	}
-
-	u.Host = podName + "." + cl.svc + ":" + cl.svcPort.StrVal
-
-	return Service{
-		SessionID: podName,
-		URL:       u,
-		Labels:    getRequestedCapabilities(pod.GetAnnotations()),
-		CancelFunc: func() {
-			cancel()
-		},
-		Status:  Running,
-		Started: pod.CreationTimestamp.Time,
-	}, nil
-}
-
-//Delete ...
-func (cl *service) Delete(name string) error {
-	return deletePod(cl.clientset, cl.ns, name)
-}
-
-//Logs ...
-func (cl *service) Logs(ctx context.Context, name string) (io.ReadCloser, error) {
-	req := cl.clientset.CoreV1().Pods(cl.ns).GetLogs(name, &apiv1.PodLogOptions{
-		Container:  "browser",
-		Follow:     true,
-		Previous:   false,
-		Timestamps: false,
-	})
-	return req.Stream(ctx)
-}
-
-type quota struct {
-	ns        string
-	clientset kubernetes.Interface
-}
-
-//Create ...
-func (cl quota) Create(limit int64) (Quota, error) {
-	context := context.Background()
-	quantity, err := resource.ParseQuantity(strconv.FormatInt(limit, 10))
-	if err != nil {
-		return Quota{}, fmt.Errorf("failed to parse limit amount")
-	}
-	quota := &apiv1.ResourceQuota{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   quotaName,
-			Labels: map[string]string{label: "quota"},
-		},
-		Spec: apiv1.ResourceQuotaSpec{
-			Hard: map[apiv1.ResourceName]resource.Quantity{apiv1.ResourcePods: quantity},
-		},
-	}
-	quota, err = cl.clientset.CoreV1().ResourceQuotas(cl.ns).Create(context, quota, metav1.CreateOptions{})
-	if err != nil {
-		return Quota{}, fmt.Errorf("failed to create resourceQuota")
-	}
-	return Quota{
-		Name:            quota.GetName(),
-		CurrentMaxLimit: quota.Spec.Hard.Pods().Value(),
-	}, nil
-}
-
-func (cl quota) Get() (Quota, error) {
-	context := context.Background()
-	quota, err := cl.clientset.CoreV1().ResourceQuotas(cl.ns).Get(context, quotaName, metav1.GetOptions{})
-	if err != nil {
-		return Quota{}, fmt.Errorf("quota not found")
-	}
-
-	return Quota{
-		Name:            quota.GetName(),
-		CurrentMaxLimit: quota.Spec.Hard.Pods().Value(),
-	}, nil
-}
-
-//Update ...
-func (cl quota) Update(limit int64) (Quota, error) {
-	context := context.Background()
-	quantity, err := resource.ParseQuantity(strconv.FormatInt(limit, 10))
-	if err != nil {
-		return Quota{}, fmt.Errorf("failed to parse limit amount")
-	}
-	rq := &apiv1.ResourceQuota{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   quotaName,
-			Labels: map[string]string{label: "quota"},
-		},
-		Spec: apiv1.ResourceQuotaSpec{
-			Hard: map[apiv1.ResourceName]resource.Quantity{apiv1.ResourcePods: quantity},
-		},
-	}
-	quota, err := cl.clientset.CoreV1().ResourceQuotas(cl.ns).Update(context, rq, metav1.UpdateOptions{})
-	if err != nil {
-		return Quota{}, fmt.Errorf("resourse quota update error: %v", err)
-	}
-
-	return Quota{
-		Name:            quota.GetName(),
-		CurrentMaxLimit: rq.Spec.Hard.Pods().Value(),
-	}, err
+	return layout
 }
 
 func deletePod(clientset kubernetes.Interface, namespace, name string) error {
@@ -631,6 +752,10 @@ func getBrowserPorts() []apiv1.ContainerPort {
 	fn("selenium", browserPorts.selenium.IntValue())
 
 	return port
+}
+
+func getVideoPorts() []apiv1.ContainerPort {
+	return []apiv1.ContainerPort{}
 }
 
 func getSidecarPorts(p intstr.IntOrString) []apiv1.ContainerPort {

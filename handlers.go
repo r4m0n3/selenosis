@@ -58,7 +58,7 @@ type response struct {
 	Selenosis Status `json:"selenosis,omitempty"`
 }
 
-//HandleSession ...
+// HandleSession ...
 func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	logger := app.logger.WithFields(logrus.Fields{
@@ -211,7 +211,7 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 	logger.WithField("time_elapsed", tools.TimeElapsed(start)).Infof("browser session id: %s created", service.SessionID)
 }
 
-//HandleProxy ...
+// HandleProxy ...
 func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	sessionID, ok := mux.Vars(r)["sessionId"]
 	if !ok {
@@ -242,13 +242,13 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Errorf("proxying session error: %v", err)
-			w.WriteHeader(http.StatusBadGateway)
+			tools.JSONError(w, fmt.Sprintf("proxing session error: %v", err), http.StatusBadGateway)
 		},
 	}).ServeHTTP(w, r)
 
 }
 
-//HandleHubStatus ...
+// HandleHubStatus ...
 func (app *App) HandleHubStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -261,7 +261,7 @@ func (app *App) HandleHubStatus(w http.ResponseWriter, _ *http.Request) {
 		})
 }
 
-//HandleReverseProxy ...
+// HandleReverseProxy ...
 func (app *App) HandleReverseProxy(w http.ResponseWriter, r *http.Request) {
 	sessionID, ok := mux.Vars(r)["sessionId"]
 	if !ok {
@@ -298,7 +298,7 @@ func (app *App) HandleReverseProxy(w http.ResponseWriter, r *http.Request) {
 	}).ServeHTTP(w, r)
 }
 
-//HandleVNC ...
+// HandleVNC ...
 func (app *App) HandleVNC() websocket.Handler {
 	return func(wsconn *websocket.Conn) {
 		defer wsconn.Close()
@@ -339,7 +339,7 @@ func (app *App) HandleVNC() websocket.Handler {
 	}
 }
 
-//HandleLogs ...
+// HandleLogs ...
 func (app *App) HandleLogs() websocket.Handler {
 	return func(wsconn *websocket.Conn) {
 		defer wsconn.Close()
@@ -380,7 +380,7 @@ func (app *App) HandleLogs() websocket.Handler {
 	}
 }
 
-//HandleStatus ...
+// HandleStatus ...
 func (app *App) HandleStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 

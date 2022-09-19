@@ -36,6 +36,7 @@ func command() *cobra.Command {
 		service             string
 		imagePullSecretName string
 		proxyImage          string
+		videoImage          string
 		sessionRetryCount   int
 		limit               int
 		browserWaitTimeout  time.Duration
@@ -71,6 +72,7 @@ func command() *cobra.Command {
 				ServicePort:         proxyPort,
 				ImagePullSecretName: imagePullSecretName,
 				ProxyImage:          proxyImage,
+				VideoImage:          videoImage,
 			})
 
 			if err != nil {
@@ -153,6 +155,7 @@ func command() *cobra.Command {
 	cmd.Flags().DurationVar(&shutdownTimeout, "graceful-shutdown-timeout", 30*time.Second, "time in seconds  gracefull shutdown timeout")
 	cmd.Flags().StringVar(&imagePullSecretName, "image-pull-secret-name", "", "secret name to private registry")
 	cmd.Flags().StringVar(&proxyImage, "proxy-image", "alcounit/seleniferous:latest", "in case you use private registry replace with image from private registry")
+	cmd.Flags().StringVar(&videoImage, "video-image", "selenoid/video-recorder:latest-release", "image to use for browser container video recording")
 	cmd.Flags().SortFlags = false
 
 	return cmd

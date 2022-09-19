@@ -35,5 +35,5 @@ jobs:
           push: true
           build-args: BUILD_VERSION=${{ steps.get_version.outputs.VERSION }}
           tags: |
-            alcounit/selenosis:latest
-            alcounit/selenosis:${{ steps.get_version.outputs.VERSION }}
+            rocketboy/selenosis:latest
+            rocketboy/selenosis:${{ steps.get_version.outputs.VERSION }}
