@@ -589,6 +589,37 @@ chrome:
       image: selenoid/vnc:chrome_86.0
 ```
 
+## serviceAccountName
+To set [serviceAccountName](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/) for browser pods.)
+```json
+{
+  "chrome": {
+    "defaultVersion": "85.0",
+    "path": "/",
+    "spec": {
+      "serviceAccountName": "default"
+    },
+    "versions": {
+      "85.0": {
+        "image": "selenoid/vnc:chrome_85.0"
+      }
+    }
+  }
+}
+```
+
+```yaml
+---
+chrome:
+  defaultVersion: "85.0"
+  path: "/"
+  spec:
+    serviceAccountName: default
+  versions:
+    '85.0':
+      image: selenoid/vnc:chrome_85.0
+```
+
 ### Custom UID and GID for browser pod
 Browser pod can be run with custom UID and GID. To do so set runAs property for specific browser globally or per each browser version.
 ``` json
@@ -704,6 +735,7 @@ List of capabilities required for selenoid-ui compatibility:
 | enableVNC        | boolean | enables VNC support      |
 | name             | string  | name of test             |
 | screenResolution | string  | custom screen resolution |
+| enableVideo      | string  | enables video capture    |
 
 </br>
  Note: you can omit browser version in your desired capabilities, make sure you set defaultVersion property in the config file.

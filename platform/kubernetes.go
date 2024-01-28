@@ -30,43 +30,61 @@ var (
 	label        = "selenosis.app.type"
 	quotaName    = "selenosis-pod-limit"
 	browserPorts = struct {
-		selenium, vnc intstr.IntOrString
+		selenium, vnc, video intstr.IntOrString
 	}{
 		selenium: intstr.FromString("4444"),
 		vnc:      intstr.FromString("5900"),
+		video:    intstr.FromString("6099"),
 	}
 
 	defaultsAnnotations = struct {
-		testName, browserName, browserVersion, screenResolution, enableVNC, timeZone string
+		testName,
+		browserName,
+		browserVersion,
+		screenResolution,
+		enableVNC,
+		enableVideo,
+		timeZone,
+		videoName,
+		videoScreenSize,
+		videoCodec,
+		videoFrameRate string
 	}{
 		testName:         "testName",
 		browserName:      "browserName",
 		browserVersion:   "browserVersion",
 		screenResolution: "SCREEN_RESOLUTION",
 		enableVNC:        "ENABLE_VNC",
+		enableVideo:      "ENABLE_VIDEO",
 		timeZone:         "TZ",
+		videoName:        "FILE_NAME",
+		videoScreenSize:  "VIDEO_SIZE",
+		videoCodec:       "CODEC",
+		videoFrameRate:   "FRAME_RATE",
 	}
 	defaultLabels = struct {
-		serviceType, appType, session string
+		serviceType, apiServer, appType, session string
 	}{
 		serviceType: "type",
+		apiServer:   "apiserver",
 		appType:     label,
 		session:     "session",
 	}
 )
 
-//ClientConfig ...
+// ClientConfig ...
 type ClientConfig struct {
 	Namespace           string
 	Service             string
 	ServicePort         string
 	ImagePullSecretName string
 	ProxyImage          string
+	VideoImage          string
 	ReadinessTimeout    time.Duration
 	IdleTimeout         time.Duration
 }
 
-//Client ...
+// Client ...
 type Client struct {
 	ns        string
 	svc       string
@@ -76,7 +94,7 @@ type Client struct {
 	quota     QuotaInterface
 }
 
-//NewClient ...
+// NewClient ...
 func NewClient(c ClientConfig) (Platform, error) {
 
 	conf, err := rest.InClusterConfig()
@@ -96,8 +114,10 @@ func NewClient(c ClientConfig) (Platform, error) {
 		svcPort:             intstr.FromString(c.ServicePort),
 		imagePullSecretName: c.ImagePullSecretName,
 		proxyImage:          c.ProxyImage,
+		videoImage:          c.VideoImage,
 		readinessTimeout:    c.ReadinessTimeout,
 		idleTimeout:         c.IdleTimeout,
+		waitForService:      waitForService,
 	}
 
 	quota := &quota{
@@ -124,7 +144,7 @@ func (cl *Client) Quota() QuotaInterface {
 	return cl.quota
 }
 
-//List ...
+// List ...
 func (cl *Client) State() (PlatformState, error) {
 	context := context.Background()
 	pods, err := cl.clientset.CoreV1().Pods(cl.ns).List(context, metav1.ListOptions{})
@@ -185,7 +205,7 @@ func (cl *Client) State() (PlatformState, error) {
 
 }
 
-//Watch ...
+// Watch ...
 func (cl *Client) Watch() <-chan Event {
 	ch := make(chan Event)
 	namespace := informers.WithNamespace(cl.ns)
@@ -291,146 +311,26 @@ func (cl *Client) Watch() <-chan Event {
 	return ch
 }
 
+type waitSvcReadyFunc func(u url.URL, t time.Duration) error
+
 type service struct {
 	ns                  string
 	svc                 string
 	svcPort             intstr.IntOrString
 	imagePullSecretName string
 	proxyImage          string
+	videoImage          string
 	readinessTimeout    time.Duration
 	idleTimeout         time.Duration
 	clientset           kubernetes.Interface
+	waitForService      waitSvcReadyFunc
 }
 
-//Create ...
+// Create ...
 func (cl *service) Create(layout ServiceSpec) (Service, error) {
-	annontations := map[string]string{
-		defaultsAnnotations.browserName:    layout.Template.BrowserName,
-		defaultsAnnotations.browserVersion: layout.Template.BrowserVersion,
-		defaultsAnnotations.testName:       layout.RequestedCapabilities.TestName,
-	}
+	pod := cl.buildPod(setEnvAndMeta(layout))
 
-	labels := map[string]string{
-		defaultLabels.serviceType: "browser",
-		defaultLabels.appType:     "browser",
-		defaultLabels.session:     layout.SessionID,
-	}
-
-	envVar := func(name string) (i int, b bool) {
-		for i, slice := range layout.Template.Spec.EnvVars {
-			if slice.Name == name {
-				return i, true
-			}
-		}
-		return -1, false
-	}
-
-	i, b := envVar(defaultsAnnotations.screenResolution)
-	if layout.RequestedCapabilities.ScreenResolution != "" {
-		if !b {
-			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars,
-				apiv1.EnvVar{Name: defaultsAnnotations.screenResolution,
-					Value: layout.RequestedCapabilities.ScreenResolution})
-		} else {
-			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.screenResolution, Value: layout.RequestedCapabilities.ScreenResolution}
-		}
-		annontations[defaultsAnnotations.screenResolution] = layout.RequestedCapabilities.ScreenResolution
-	} else {
-		if b {
-			annontations[defaultsAnnotations.screenResolution] = layout.Template.Spec.EnvVars[i].Value
-		}
-	}
-
-	i, b = envVar(defaultsAnnotations.enableVNC)
-	if layout.RequestedCapabilities.VNC {
-		vnc := fmt.Sprintf("%v", layout.RequestedCapabilities.VNC)
-		if !b {
-			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.enableVNC, Value: vnc})
-		} else {
-			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.enableVNC, Value: vnc}
-		}
-		annontations[defaultsAnnotations.enableVNC] = vnc
-	} else {
-		if b {
-			annontations[defaultsAnnotations.enableVNC] = layout.Template.Spec.EnvVars[i].Value
-		}
-	}
-
-	i, b = envVar(defaultsAnnotations.timeZone)
-	if layout.RequestedCapabilities.TimeZone != "" {
-		if !b {
-			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.timeZone, Value: layout.RequestedCapabilities.TimeZone})
-		} else {
-			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.timeZone, Value: layout.RequestedCapabilities.TimeZone}
-		}
-		annontations[defaultsAnnotations.timeZone] = layout.RequestedCapabilities.TimeZone
-	} else {
-		if b {
-			annontations[defaultsAnnotations.timeZone] = layout.Template.Spec.EnvVars[i].Value
-		}
-	}
-
-	if layout.Template.Meta.Labels == nil {
-		layout.Template.Meta.Labels = make(map[string]string)
-	}
-
-	for k, v := range labels {
-		layout.Template.Meta.Labels[k] = v
-	}
-
-	if layout.Template.Meta.Annotations == nil {
-		layout.Template.Meta.Annotations = make(map[string]string)
-	}
-
-	if caps, err := json.Marshal(annontations); err == nil {
-		layout.Template.Meta.Annotations["capabilities"] = string(caps)
-	}
-
-	pod := &apiv1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        layout.SessionID,
-			Labels:      layout.Template.Meta.Labels,
-			Annotations: layout.Template.Meta.Annotations,
-		},
-		Spec: apiv1.PodSpec{
-			Hostname:  layout.SessionID,
-			Subdomain: cl.svc,
-			Containers: []apiv1.Container{
-				{
-					Name:  "browser",
-					Image: layout.Template.Image,
-					SecurityContext: &apiv1.SecurityContext{
-						Privileged:   layout.Template.Privileged,
-						Capabilities: getCapabilities(layout.Template.Capabilities),
-					},
-					Env:             layout.Template.Spec.EnvVars,
-					Ports:           getBrowserPorts(),
-					Resources:       layout.Template.Spec.Resources,
-					VolumeMounts:    getVolumeMounts(layout.Template.Spec.VolumeMounts),
-					ImagePullPolicy: apiv1.PullIfNotPresent,
-				},
-				{
-					Name:  "seleniferous",
-					Image: cl.proxyImage,
-					Ports: getSidecarPorts(cl.svcPort),
-					Command: []string{
-						"/seleniferous", "--listhen-port", cl.svcPort.StrVal, "--proxy-default-path", path.Join(layout.Template.Path, "session"), "--idle-timeout", cl.idleTimeout.String(), "--namespace", cl.ns,
-					},
-					ImagePullPolicy: apiv1.PullIfNotPresent,
-				},
-			},
-			Volumes:          getVolumes(layout.Template.Volumes),
-			NodeSelector:     layout.Template.Spec.NodeSelector,
-			HostAliases:      layout.Template.Spec.HostAliases,
-			RestartPolicy:    apiv1.RestartPolicyNever,
-			Affinity:         &layout.Template.Spec.Affinity,
-			DNSConfig:        &layout.Template.Spec.DNSConfig,
-			Tolerations:      layout.Template.Spec.Tolerations,
-			ImagePullSecrets: getImagePullSecretList(cl.imagePullSecretName),
-			SecurityContext:  getSecurityContext(layout.Template.RunAs),
-		},
-	}
-
+	// TODO: change background context to context with timeout. Here we are waiting forever for pod creation for example if image does not exist.
 	context := context.Background()
 	pod, err := cl.clientset.CoreV1().Pods(cl.ns).Create(context, pod, metav1.CreateOptions{})
 
@@ -496,7 +396,7 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 		Host:   podName + "." + cl.svc + ":" + browserPorts.selenium.StrVal,
 	}
 
-	if err := waitForService(*u, cl.readinessTimeout); err != nil {
+	if err := cl.waitForService(*u, cl.readinessTimeout); err != nil {
 		cancel()
 		return Service{}, fmt.Errorf("container service is not ready %v", u.String())
 	}
@@ -515,12 +415,12 @@ func (cl *service) Create(layout ServiceSpec) (Service, error) {
 	}, nil
 }
 
-//Delete ...
+// Delete ...
 func (cl *service) Delete(name string) error {
 	return deletePod(cl.clientset, cl.ns, name)
 }
 
-//Logs ...
+// Logs ...
 func (cl *service) Logs(ctx context.Context, name string) (io.ReadCloser, error) {
 	req := cl.clientset.CoreV1().Pods(cl.ns).GetLogs(name, &apiv1.PodLogOptions{
 		Container:  "browser",
@@ -531,12 +431,91 @@ func (cl *service) Logs(ctx context.Context, name string) (io.ReadCloser, error)
 	return req.Stream(ctx)
 }
 
+func (cl *service) buildPod(layout ServiceSpec) *apiv1.Pod {
+	pod := &apiv1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        layout.SessionID,
+			Labels:      layout.Template.Meta.Labels,
+			Annotations: layout.Template.Meta.Annotations,
+		},
+		Spec: apiv1.PodSpec{
+			Hostname:  layout.SessionID,
+			Subdomain: cl.svc,
+			Containers: []apiv1.Container{
+				{
+					Name:  "browser",
+					Image: layout.Template.Image,
+					SecurityContext: &apiv1.SecurityContext{
+						Privileged:   layout.Template.Privileged,
+						Capabilities: getCapabilities(layout.Template.Capabilities),
+					},
+					Env:             layout.Template.Spec.EnvVars,
+					Ports:           getBrowserPorts(),
+					Resources:       layout.Template.Spec.Resources,
+					VolumeMounts:    getVolumeMounts(layout.Template.Spec.VolumeMounts),
+					ImagePullPolicy: apiv1.PullIfNotPresent,
+				},
+				{
+					Name:  "seleniferous",
+					Image: cl.proxyImage,
+					Ports: getSidecarPorts(cl.svcPort),
+					// TODO: Should we move this settings to the config?
+					Resources: apiv1.ResourceRequirements{
+						Limits: apiv1.ResourceList{
+							apiv1.ResourceCPU:    resource.MustParse("250m"),
+							apiv1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+					},
+					Command: []string{
+						"/seleniferous", "--listen-port", cl.svcPort.StrVal, "--proxy-default-path", path.Join(layout.Template.Path, "session"), "--idle-timeout", cl.idleTimeout.String(), "--namespace", cl.ns,
+					},
+					ImagePullPolicy: apiv1.PullIfNotPresent,
+				},
+			},
+			Volumes:            getVolumes(layout.Template.Volumes),
+			NodeSelector:       layout.Template.Spec.NodeSelector,
+			HostAliases:        layout.Template.Spec.HostAliases,
+			RestartPolicy:      apiv1.RestartPolicyNever,
+			Affinity:           &layout.Template.Spec.Affinity,
+			DNSConfig:          &layout.Template.Spec.DNSConfig,
+			Tolerations:        layout.Template.Spec.Tolerations,
+			ImagePullSecrets:   getImagePullSecretList(cl.imagePullSecretName),
+			SecurityContext:    getSecurityContext(layout.Template.RunAs),
+			ServiceAccountName: layout.Template.Spec.ServiceAccountName,
+			PriorityClassName:  layout.Template.Spec.PriorityClassName,
+		},
+	}
+
+	if layout.RequestedCapabilities.Video {
+		videoContainer := apiv1.Container{
+			Name:            "video-recorder",
+			Image:           cl.videoImage,
+			Ports:           getVideoPorts(),
+			Env:             layout.Template.Spec.EnvVars,
+			VolumeMounts:    getVolumeMounts(layout.Template.Spec.VolumeMounts),
+			ImagePullPolicy: apiv1.PullIfNotPresent,
+			Command:         []string{},
+		}
+
+		lifecycle := &apiv1.Lifecycle{
+			PreStop: &apiv1.Handler{
+				Exec: &apiv1.ExecAction{
+					Command: []string{"sh", "-c", "sleep 5"},
+				},
+			},
+		}
+		pod.Spec.Containers[0].Lifecycle = lifecycle
+		pod.Spec.Containers = append(pod.Spec.Containers, videoContainer)
+	}
+	return pod
+}
+
 type quota struct {
 	ns        string
 	clientset kubernetes.Interface
 }
 
-//Create ...
+// Create ...
 func (cl quota) Create(limit int64) (Quota, error) {
 	context := context.Background()
 	quantity, err := resource.ParseQuantity(strconv.FormatInt(limit, 10))
@@ -575,7 +554,7 @@ func (cl quota) Get() (Quota, error) {
 	}, nil
 }
 
-//Update ...
+// Update ...
 func (cl quota) Update(limit int64) (Quota, error) {
 	context := context.Background()
 	quantity, err := resource.ParseQuantity(strconv.FormatInt(limit, 10))
@@ -602,6 +581,159 @@ func (cl quota) Update(limit int64) (Quota, error) {
 	}, err
 }
 
+func setEnvAndMeta(layout ServiceSpec) ServiceSpec {
+	annontations := map[string]string{
+		defaultsAnnotations.browserName:    layout.Template.BrowserName,
+		defaultsAnnotations.browserVersion: layout.Template.BrowserVersion,
+		defaultsAnnotations.testName:       layout.RequestedCapabilities.TestName,
+	}
+
+	labels := map[string]string{
+		defaultLabels.apiServer:   "access",
+		defaultLabels.serviceType: "browser",
+		defaultLabels.appType:     "browser",
+		defaultLabels.session:     layout.SessionID,
+	}
+
+	envVar := func(name string) (i int, b bool) {
+		for i, slice := range layout.Template.Spec.EnvVars {
+			if slice.Name == name {
+				return i, true
+			}
+		}
+		return -1, false
+	}
+
+	i, b := envVar(defaultsAnnotations.screenResolution)
+	if layout.RequestedCapabilities.ScreenResolution != "" {
+		if !b {
+			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars,
+				apiv1.EnvVar{Name: defaultsAnnotations.screenResolution,
+					Value: layout.RequestedCapabilities.ScreenResolution})
+		} else {
+			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.screenResolution, Value: layout.RequestedCapabilities.ScreenResolution}
+		}
+		annontations[defaultsAnnotations.screenResolution] = layout.RequestedCapabilities.ScreenResolution
+	} else {
+		if b {
+			annontations[defaultsAnnotations.screenResolution] = layout.Template.Spec.EnvVars[i].Value
+		}
+	}
+
+	i, b = envVar(defaultsAnnotations.enableVNC)
+	if layout.RequestedCapabilities.VNC {
+		vnc := fmt.Sprintf("%v", layout.RequestedCapabilities.VNC)
+		if !b {
+			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.enableVNC, Value: vnc})
+		} else {
+			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.enableVNC, Value: vnc}
+		}
+		annontations[defaultsAnnotations.enableVNC] = vnc
+	} else {
+		if b {
+			annontations[defaultsAnnotations.enableVNC] = layout.Template.Spec.EnvVars[i].Value
+		}
+	}
+
+	i, b = envVar(defaultsAnnotations.timeZone)
+	if layout.RequestedCapabilities.TimeZone != "" {
+		if !b {
+			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.timeZone, Value: layout.RequestedCapabilities.TimeZone})
+		} else {
+			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.timeZone, Value: layout.RequestedCapabilities.TimeZone}
+		}
+		annontations[defaultsAnnotations.timeZone] = layout.RequestedCapabilities.TimeZone
+	} else {
+		if b {
+			annontations[defaultsAnnotations.timeZone] = layout.Template.Spec.EnvVars[i].Value
+		}
+	}
+
+	i, b = envVar(defaultsAnnotations.enableVideo)
+	if layout.RequestedCapabilities.Video {
+		video := fmt.Sprintf("%v", layout.RequestedCapabilities.Video)
+		if !b {
+			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.enableVideo, Value: video})
+		} else {
+			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.enableVideo, Value: video}
+		}
+		layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: "BROWSER_CONTAINER_NAME", Value: "localhost"})
+
+		i, b = envVar(defaultsAnnotations.videoName)
+		videoName := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoName)
+		if videoName == "" {
+			if b {
+				videoName = layout.Template.Spec.EnvVars[i].Value
+			} else {
+				videoName = fmt.Sprintf("%v.mp4", layout.SessionID)
+			}
+		}
+		if !b {
+			layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoName, Value: videoName})
+		} else {
+			layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoName, Value: videoName}
+		}
+
+		i, b = envVar(defaultsAnnotations.videoScreenSize)
+		videoScreenSize := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoScreenSize)
+		if videoScreenSize != "" {
+			if !b {
+				layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoScreenSize, Value: videoScreenSize})
+			} else {
+				layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoScreenSize, Value: videoScreenSize}
+			}
+			annontations[defaultsAnnotations.videoScreenSize] = videoScreenSize
+		}
+
+		i, b = envVar(defaultsAnnotations.videoFrameRate)
+		videoFrameRate := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoFrameRate)
+		if videoFrameRate != "0" {
+			if !b {
+				layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoFrameRate, Value: videoFrameRate})
+			} else {
+				layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoFrameRate, Value: videoFrameRate}
+			}
+			annontations[defaultsAnnotations.videoFrameRate] = videoFrameRate
+		}
+
+		i, b = envVar(defaultsAnnotations.videoCodec)
+		videoCodec := fmt.Sprintf("%v", layout.RequestedCapabilities.VideoCodec)
+		if videoCodec != "" {
+			if !b {
+				layout.Template.Spec.EnvVars = append(layout.Template.Spec.EnvVars, apiv1.EnvVar{Name: defaultsAnnotations.videoCodec, Value: videoCodec})
+			} else {
+				layout.Template.Spec.EnvVars[i] = apiv1.EnvVar{Name: defaultsAnnotations.videoCodec, Value: videoCodec}
+			}
+			annontations[defaultsAnnotations.videoCodec] = videoCodec
+		}
+
+		annontations[defaultsAnnotations.enableVideo] = video
+		annontations[defaultsAnnotations.videoName] = videoName
+	} else {
+		if b {
+			annontations[defaultsAnnotations.enableVideo] = layout.Template.Spec.EnvVars[i].Value
+		}
+	}
+
+	if layout.Template.Meta.Labels == nil {
+		layout.Template.Meta.Labels = make(map[string]string)
+	}
+
+	for k, v := range labels {
+		layout.Template.Meta.Labels[k] = v
+	}
+
+	if layout.Template.Meta.Annotations == nil {
+		layout.Template.Meta.Annotations = make(map[string]string)
+	}
+
+	if caps, err := json.Marshal(annontations); err == nil {
+		layout.Template.Meta.Annotations["capabilities"] = string(caps)
+	}
+
+	return layout
+}
+
 func deletePod(clientset kubernetes.Interface, namespace, name string) error {
 	context := context.Background()
 
@@ -620,6 +752,10 @@ func getBrowserPorts() []apiv1.ContainerPort {
 	fn("selenium", browserPorts.selenium.IntValue())
 
 	return port
+}
+
+func getVideoPorts() []apiv1.ContainerPort {
+	return []apiv1.ContainerPort{}
 }
 
 func getSidecarPorts(p intstr.IntOrString) []apiv1.ContainerPort {
@@ -719,7 +855,7 @@ func waitForService(u url.URL, t time.Duration) error {
 				resp.Body.Close()
 			}
 			if err != nil {
-				<-time.After(50 * time.Millisecond)
+				<-time.After(500 * time.Millisecond)
 				continue
 			}
 			up <- struct{}{}

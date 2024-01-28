@@ -10,29 +10,31 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 )
 
-//Meta describes standart metadata
+// Meta describes standard metadata
 type Meta struct {
 	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }
 
-//Spec describes specification for Service
+// Spec describes specification for Service
 type Spec struct {
-	Resources    apiv1.ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
-	HostAliases  []apiv1.HostAlias          `yaml:"hostAliases,omitempty" json:"hostAliases,omitempty"`
-	EnvVars      []apiv1.EnvVar             `yaml:"env,omitempty" json:"env,omitempty"`
-	NodeSelector map[string]string          `yaml:"nodeSelector,omitempty" json:"nodeSelector,omitempty"`
-	Affinity     apiv1.Affinity             `yaml:"affinity,omitempty" json:"affinity,omitempty"`
-	DNSConfig    apiv1.PodDNSConfig         `yaml:"dnsConfig,omitempty" json:"dnsConfig,omitempty"`
-	Tolerations  []apiv1.Toleration         `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
-	VolumeMounts []apiv1.VolumeMount        `yaml:"volumeMounts,omitempty" json:"volumeMounts,omitempty"`
+	Resources          apiv1.ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
+	HostAliases        []apiv1.HostAlias          `yaml:"hostAliases,omitempty" json:"hostAliases,omitempty"`
+	EnvVars            []apiv1.EnvVar             `yaml:"env,omitempty" json:"env,omitempty"`
+	NodeSelector       map[string]string          `yaml:"nodeSelector,omitempty" json:"nodeSelector,omitempty"`
+	Affinity           apiv1.Affinity             `yaml:"affinity,omitempty" json:"affinity,omitempty"`
+	DNSConfig          apiv1.PodDNSConfig         `yaml:"dnsConfig,omitempty" json:"dnsConfig,omitempty"`
+	Tolerations        []apiv1.Toleration         `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
+	VolumeMounts       []apiv1.VolumeMount        `yaml:"volumeMounts,omitempty" json:"volumeMounts,omitempty"`
+	ServiceAccountName string                     `yaml:"serviceAccountName,omitempty" json:"ServiceAccountName,omitempty"`
+	PriorityClassName  string                     `yaml:"priorityClassName,omitempty" json:"priorityClassName,omitempty"`
 }
 type RunAsOptions struct {
 	RunAsUser  *int64 `yaml:"uid,omitempty" json:"uid,omitempty"`
 	RunAsGroup *int64 `yaml:"gid,omitempty" json:"gid,omitempty"`
 }
 
-//BrowserSpec describes settings for Service
+// BrowserSpec describes settings for Service
 type BrowserSpec struct {
 	BrowserName    string             `yaml:"-" json:"-"`
 	BrowserVersion string             `yaml:"-" json:"-"`
@@ -46,14 +48,14 @@ type BrowserSpec struct {
 	RunAs          RunAsOptions       `yaml:"runAs,omitempty" json:"runAs,omitempty"`
 }
 
-//ServiceSpec describes data requred for creating service
+// ServiceSpec describes data required for creating service
 type ServiceSpec struct {
 	SessionID             string
 	RequestedCapabilities selenium.Capabilities
 	Template              BrowserSpec
 }
 
-//Service ...
+// Service ...
 type Service struct {
 	SessionID  string            `json:"id"`
 	URL        *url.URL          `json:"-"`
@@ -83,16 +85,16 @@ type Worker struct {
 	Uptime  string            `json:"uptime"`
 }
 
-//ServiceStatus ...
+// ServiceStatus ...
 type ServiceStatus string
 
-//Event ...
+// Event ...
 type Event struct {
 	Type           EventType
 	PlatformObject interface{}
 }
 
-//EventType ...
+// EventType ...
 type EventType string
 
 const (
@@ -105,7 +107,7 @@ const (
 	Unknown ServiceStatus = "Unknown"
 )
 
-//Platform ...
+// Platform ...
 type Platform interface {
 	Service() ServiceInterface
 	Quota() QuotaInterface

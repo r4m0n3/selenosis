@@ -1,6 +1,8 @@
 package selenium
 
-//Capabilities ...
+import "github.com/imdario/mergo"
+
+// Capabilities ...
 type Capabilities struct {
 	BrowserName           string            `json:"browserName,omitempty"`
 	DeviceName            string            `json:"deviceName,omitempty"`
@@ -28,9 +30,10 @@ type Capabilities struct {
 	DNSServers            []string          `json:"dnsServers,omitempty"`
 	Labels                map[string]string `json:"labels,omitempty"`
 	SessionTimeout        string            `json:"sessionTimeout,omitempty"`
+	ExtensionCapabilities *Capabilities     `json:"selenosis:options,omitempty"`
 }
 
-//ValidateCapabilities ...
+// ValidateCapabilities ...
 func (c *Capabilities) ValidateCapabilities() {
 	if c.W3CBrowserVersion != "" {
 		c.BrowserVersion = c.W3CBrowserVersion
@@ -39,9 +42,13 @@ func (c *Capabilities) ValidateCapabilities() {
 	if c.WC3PlatformName != "" {
 		c.Platform = c.WC3PlatformName
 	}
+
+	if c.ExtensionCapabilities != nil {
+		mergo.Merge(c, *c.ExtensionCapabilities, mergo.WithOverride)
+	}
 }
 
-//GetBrowserName ...
+// GetBrowserName ...
 func (c *Capabilities) GetBrowserName() string {
 	browserName := c.BrowserName
 	if browserName != "" {

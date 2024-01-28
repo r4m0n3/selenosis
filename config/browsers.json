@@ -13,6 +13,7 @@
         }
       },
       "spec": {
+        "serviceAccountName": "default",
         "resources": {
           "requests": {
             "memory": "500Mi",

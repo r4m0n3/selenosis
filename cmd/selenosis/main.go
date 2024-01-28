@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"net/http"
 	"os"
@@ -23,7 +25,7 @@ import (
 
 var buildVersion = "HEAD"
 
-//Command ...
+// Command ...
 func command() *cobra.Command {
 
 	var (
@@ -34,6 +36,7 @@ func command() *cobra.Command {
 		service             string
 		imagePullSecretName string
 		proxyImage          string
+		videoImage          string
 		sessionRetryCount   int
 		limit               int
 		browserWaitTimeout  time.Duration
@@ -44,7 +47,7 @@ func command() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "selenosis",
-		Short: "Scallable, stateless selenium grid for Kubernetes cluster",
+		Short: "Scalable, stateless selenium grid for Kubernetes cluster",
 		Run: func(cmd *cobra.Command, args []string) {
 
 			logger := logrus.New()
@@ -69,6 +72,7 @@ func command() *cobra.Command {
 				ServicePort:         proxyPort,
 				ImagePullSecretName: imagePullSecretName,
 				ProxyImage:          proxyImage,
+				VideoImage:          videoImage,
 			})
 
 			if err != nil {
@@ -90,6 +94,10 @@ func command() *cobra.Command {
 				BuildVersion:       buildVersion,
 			})
 
+			prometheus.Register(selenosis.SessionLimitStat)
+			prometheus.Register(selenosis.SessionRunningStat)
+			prometheus.Register(selenosis.SessionBrowserCount)
+
 			router := mux.NewRouter()
 			router.HandleFunc("/wd/hub/session", app.HandleSession).Methods(http.MethodPost)
 			router.PathPrefix("/wd/hub/session/{sessionId}").HandlerFunc(app.HandleProxy)
@@ -100,6 +108,7 @@ func command() *cobra.Command {
 			router.PathPrefix("/download/{sessionId}").HandlerFunc(app.HandleReverseProxy)
 			router.PathPrefix("/clipboard/{sessionId}").HandlerFunc(app.HandleReverseProxy)
 			router.PathPrefix("/status").HandlerFunc(app.HandleStatus)
+			router.Handle("/metrics", promhttp.Handler())
 			router.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}).Methods(http.MethodGet)
@@ -146,6 +155,7 @@ func command() *cobra.Command {
 	cmd.Flags().DurationVar(&shutdownTimeout, "graceful-shutdown-timeout", 30*time.Second, "time in seconds  gracefull shutdown timeout")
 	cmd.Flags().StringVar(&imagePullSecretName, "image-pull-secret-name", "", "secret name to private registry")
 	cmd.Flags().StringVar(&proxyImage, "proxy-image", "alcounit/seleniferous:latest", "in case you use private registry replace with image from private registry")
+	cmd.Flags().StringVar(&videoImage, "video-image", "selenoid/video-recorder:latest-release", "image to use for browser container video recording")
 	cmd.Flags().SortFlags = false
 
 	return cmd

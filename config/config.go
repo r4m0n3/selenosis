@@ -15,7 +15,7 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 )
 
-//Layout ...
+// Layout ...
 type Layout struct {
 	DefaultSpec    platform.Spec                    `yaml:"spec" json:"spec"`
 	Meta           platform.Meta                    `yaml:"meta" json:"meta"`
@@ -27,14 +27,14 @@ type Layout struct {
 	RunAs          platform.RunAsOptions            `yaml:"runAs,omitempty" json:"runAs,omitempty"`
 }
 
-//BrowsersConfig ...
+// BrowsersConfig ...
 type BrowsersConfig struct {
 	configFile string
 	lock       sync.RWMutex
 	containers map[string]*Layout
 }
 
-//NewBrowsersConfig returns parced browsers config from JSON or YAML file.
+// NewBrowsersConfig returns parced browsers config from JSON or YAML file.
 func NewBrowsersConfig(configFile string) (*BrowsersConfig, error) {
 	layouts, err := readConfig(configFile)
 	if err != nil {
@@ -47,7 +47,7 @@ func NewBrowsersConfig(configFile string) (*BrowsersConfig, error) {
 	}, nil
 }
 
-//Reload ...
+// Reload ...
 func (cfg *BrowsersConfig) Reload() error {
 	cfg.lock.Lock()
 	defer cfg.lock.Unlock()
@@ -61,7 +61,7 @@ func (cfg *BrowsersConfig) Reload() error {
 	return nil
 }
 
-//Find return Container if it present in config
+// Find return Container if it present in config
 func (cfg *BrowsersConfig) Find(name, version string) (platform.BrowserSpec, error) {
 	cfg.lock.Lock()
 	defer cfg.lock.Unlock()
@@ -90,7 +90,7 @@ func (cfg *BrowsersConfig) Find(name, version string) (platform.BrowserSpec, err
 	return *v, nil
 }
 
-//GetBrowserVersions ...
+// GetBrowserVersions ...
 func (cfg *BrowsersConfig) GetBrowserVersions() map[string][]string {
 	cfg.lock.Lock()
 	defer cfg.lock.Unlock()
@@ -136,8 +136,8 @@ func readConfig(configFile string) (map[string]*Layout, error) {
 		spec := layout.DefaultSpec
 		for _, container := range layout.Versions {
 			if container.Path == "" {
-				container.Path = layout.Path	
-			}			
+				container.Path = layout.Path
+			}
 			container.Meta.Annotations = merge(container.Meta.Annotations, layout.Meta.Annotations)
 			container.Meta.Labels = merge(container.Meta.Labels, layout.Meta.Labels)
 			container.Volumes = layout.Volumes
